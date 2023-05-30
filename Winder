@@ -1,0 +1,215 @@
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+const int LCD_ADDRESS = 0x27;
+LiquidCrystal_I2C lcd(LCD_ADDRESS, 20, 4);
+
+const int button1Pin = 2;
+const int button2Pin = 3;
+const int button3Pin = 4;
+
+float currentRPM = 0.0;
+float currentClutchPercentage = 0.0;
+bool currentDirectionCW = true;
+
+int currentOption = 0; // Current selected option (0: RPM, 1: Clutch, 2: Direction)
+
+bool button1Pressed = false;
+bool button2Pressed = false;
+bool button3Pressed = false;
+
+bool button2Held = false; // Track if button 2 is being held
+bool button3Held = false; // Track if button 3 is being held
+
+float clutchIncrement = 0.5; // Clutch increment/decrement value
+float rpmIncrement = 0.5;    // RPM increment/decrement value
+
+bool lcdNeedsUpdate = false; // Flag indicating if LCD needs to be updated
+
+unsigned long buttonPressStartTime = 0;
+unsigned long buttonHoldStartTime = 0;
+unsigned long buttonHoldPreviousTime = 0;
+
+const unsigned long buttonPressDelay = 200;    // Delay to debounce button press
+const unsigned long buttonHoldDelay = 500;     // Delay to activate button hold
+const unsigned long buttonHoldInterval = 250;  // Interval between button hold increments
+
+void setup() {
+  Wire.begin();
+  lcd.begin(20, 4);
+  lcd.init(); // Initialize the LCD
+  lcd.backlight();
+  lcd.clear();
+
+  pinMode(button1Pin, INPUT_PULLUP);
+  pinMode(button2Pin, INPUT_PULLUP);
+  pinMode(button3Pin, INPUT_PULLUP);
+
+  Serial.begin(9600); // Initialize Serial Monitor
+}
+
+void updateRPM(float increment) {
+  currentRPM += increment;
+  if (currentRPM < 0.0) {
+    currentRPM = 0.0;
+  }
+  if (currentRPM > 60.0) {
+    currentRPM = 60.0;
+  }
+}
+
+void updateClutch(float increment) {
+  currentClutchPercentage += increment;
+  if (currentClutchPercentage < 0.0) {
+    currentClutchPercentage = 0.0;
+  }
+  if (currentClutchPercentage > 100.0) {
+    currentClutchPercentage = 100.0;
+  }
+}
+
+void updateDirection() {
+  currentDirectionCW = !currentDirectionCW;
+}
+
+void scrollDown() {
+  currentOption++;
+  if (currentOption > 2) {
+    currentOption = 0;
+  }
+}
+
+void updateUI() {
+  lcd.clear();
+
+  lcd.setCursor(0, 0);
+  lcd.print("ABM TOAR CONTROLLER");
+
+  lcd.setCursor(0, 1);
+  lcd.print("RPM:       ");
+  if (currentOption == 0) {
+    lcd.print(">>");
+  }
+  lcd.print(currentRPM, 1);
+
+  lcd.setCursor(0, 2);
+  lcd.print("CLUTCH:    ");
+  if (currentOption == 1) {
+    lcd.print(">>");
+  }
+  lcd.print(currentClutchPercentage, 1);
+  lcd.print("%");
+
+  lcd.setCursor(0, 3);
+  lcd.print("DIRECTION: ");
+  if (currentOption == 2) {
+    lcd.print(">>");
+  }
+  lcd.print(currentDirectionCW ? "CW " : "CCW");
+}
+
+void handleButtonPress() {
+  if (currentOption == 0) {
+    // RPM selected
+    if (digitalRead(button2Pin) == LOW) {
+      // Button 2 pressed, start incrementing RPM
+      button2Held = true;
+      updateRPM(rpmIncrement);
+      lcdNeedsUpdate = true;
+    }
+    else if (digitalRead(button3Pin) == LOW) {
+      // Button 3 pressed, start decrementing RPM
+      button2Held = true; // Treat it as button 2 being held
+      updateRPM(-rpmIncrement);
+      lcdNeedsUpdate = true;
+    }
+  }
+  else if (currentOption == 1) {
+    // Clutch selected
+    if (digitalRead(button2Pin) == LOW) {
+      // Button 2 pressed, start incrementing Clutch
+      button2Held = true;
+      updateClutch(clutchIncrement);
+      lcdNeedsUpdate = true;
+    }
+    else if (digitalRead(button3Pin) == LOW) {
+      // Button 3 pressed, start decrementing Clutch
+      button2Held = true; // Treat it as button 2 being held
+      updateClutch(-clutchIncrement);
+      lcdNeedsUpdate = true;
+    }
+  }
+  else if (currentOption == 2) {
+    // Direction selected
+    if (digitalRead(button2Pin) == LOW) {
+      // Button 2 pressed, toggle direction
+      updateDirection();
+      lcdNeedsUpdate = true;
+    }
+  }
+}
+
+void handleButtonHold() {
+  if (button2Held || button3Held) {
+    // Incrementing or decrementing values
+    if (millis() - buttonHoldPreviousTime >= buttonHoldInterval) {
+      buttonHoldPreviousTime = millis();
+      handleButtonPress();
+    }
+  }
+}
+
+void loop() {
+  // Button handling
+  if (!button1Pressed && digitalRead(button1Pin) == LOW) {
+    // Button 1 pressed
+    buttonPressStartTime = millis();
+    button1Pressed = true;
+  }
+
+  if (button1Pressed && digitalRead(button1Pin) == HIGH) {
+    // Button 1 released
+    unsigned long buttonPressDuration = millis() - buttonPressStartTime;
+    if (buttonPressDuration < buttonPressDelay) {
+      // Short press, scroll down
+      scrollDown();
+      lcdNeedsUpdate = true;
+    }
+    button1Pressed = false;
+  }
+
+  if (!button2Pressed && digitalRead(button2Pin) == LOW) {
+    // Button 2 pressed
+    button2Pressed = true;
+    buttonHoldStartTime = millis();
+    handleButtonPress();
+  }
+
+  if (button2Pressed && digitalRead(button2Pin) == HIGH) {
+    // Button 2 released
+    button2Pressed = false;
+    button2Held = false;
+  }
+
+  if (!button3Pressed && digitalRead(button3Pin) == LOW) {
+    // Button 3 pressed
+    button3Pressed = true;
+    buttonHoldStartTime = millis();
+    handleButtonPress();
+  }
+
+  if (button3Pressed && digitalRead(button3Pin) == HIGH) {
+    // Button 3 released
+    button3Pressed = false;
+    button3Held = false;
+  }
+
+  if (button2Pressed || button3Pressed) {
+    handleButtonHold();
+  }
+
+  if (lcdNeedsUpdate) {
+    updateUI();
+    lcdNeedsUpdate = false;
+  }
+}
